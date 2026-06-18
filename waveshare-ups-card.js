@@ -1,16 +1,16 @@
-const VERSION = "2.1.0";
+const VERSION = "2.2.0";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_footer:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
 
 const FIELDS = [
   ["battery_entity","Battery % sensor","sensor"],["runtime_entity","Runtime sensor","sensor"],
-  ["status_entity","Status sensor","sensor"],["output_source_entity","Output source sensor","sensor"],
-  ["battery_state_entity","Battery state sensor","sensor"],["battery_voltage_entity","Battery voltage sensor","sensor"],
+  ["status_entity","Status entity",["binary_sensor","sensor"]],["output_source_entity","Output source sensor","sensor"],
+  ["battery_state_entity","Battery state entity",["binary_sensor","sensor"]],["battery_voltage_entity","Battery voltage sensor","sensor"],
   ["supply_voltage_entity","Supply voltage sensor","sensor"],["current_entity","Current sensor","sensor"],
   ["power_entity","Power sensor","sensor"],["output_entity","Output sensor","sensor"],
-  ["battery_age_entity","Battery age sensor","sensor"],["battery_fault_entity","Battery fault sensor","sensor"],
-  ["maintenance_entity","Battery maintenance sensor","sensor"],["last_battery_change_entity","Last battery change sensor","sensor"],
+  ["battery_age_entity","Battery age sensor","sensor"],["battery_fault_entity","Battery fault entity",["binary_sensor","sensor"]],
+  ["maintenance_entity","Battery maintenance entity",["binary_sensor","sensor"]],["last_battery_change_entity","Last battery change sensor","sensor"],
   ["self_test_status_entity","Self-test status sensor","sensor"],["last_self_test_status_entity","Last self-test status sensor","sensor"],
   ["last_self_test_date_entity","Last self-test date sensor","sensor"],["calibration_status_entity","Calibration status sensor","sensor"],
   ["calibration_elapsed_entity","Calibration elapsed sensor","sensor"],["last_calibration_status_entity","Last calibration status sensor","sensor"],
@@ -39,7 +39,7 @@ const esc = value => String(value??"").replaceAll("&","&amp;").replaceAll("<","&
 const MATCHERS = {
   battery_entity:[/battery_(capacity|percentage|level)/,/battery$/,/capacity$/],
   runtime_entity:[/estimated_runtime/,/runtime/,/time_remaining/], status_entity:[/ups_status$/,/status$/],
-  output_source_entity:[/output_source/,/power_source/], battery_state_entity:[/battery_state/],
+  output_source_entity:[/output_source/,/power_source/,/source$/], battery_state_entity:[/battery_state/],
   battery_voltage_entity:[/battery_voltage/], supply_voltage_entity:[/(supply|input)_voltage/],
   current_entity:[/(^|_)current$/], power_entity:[/(^|_)power$/], output_entity:[/output_(load|percentage)/,/output$/],
   battery_age_entity:[/battery_age/], battery_fault_entity:[/battery_fault/,/fault$/],
@@ -51,7 +51,7 @@ const MATCHERS = {
   cancel_self_test_button:[/cancel_self_test/], start_runtime_calibration_button:[/start_(runtime_)?calibration/],
   cancel_runtime_calibration_button:[/cancel_(runtime_)?calibration/], battery_replaced_button:[/battery_replaced/]
 };
-const DEVICE_CLASSES = {battery_entity:"battery",runtime_entity:"duration",status_entity:"enum",battery_voltage_entity:"voltage",
+const DEVICE_CLASSES = {battery_entity:"battery",runtime_entity:"duration",status_entity:"connectivity",battery_state_entity:"battery_charging",battery_voltage_entity:"voltage",
   supply_voltage_entity:"voltage",current_entity:"current",power_entity:"power"};
 
 async function entityRegistry(hass){
@@ -71,12 +71,15 @@ async function populateFromDevice(config,hass){
   for(const [key,,domain] of FIELDS){
     if(result[key])continue;
     const patterns=MATCHERS[key]||[];
-    const candidates=deviceEntities.filter(entry=>entry.entity_id.startsWith(`${domain}.`)&&!used.has(entry.entity_id));
+    const domains=Array.isArray(domain)?domain:[domain];
+    const candidates=deviceEntities.filter(entry=>domains.includes(entry.entity_id.split(".")[0])&&!used.has(entry.entity_id));
     let best=null,bestScore=0;
     for(const entry of candidates){
       const slug=entry.entity_id.split(".")[1],text=`${slug} ${entry.name||""} ${entry.original_name||""}`.toLowerCase().replaceAll(/[^a-z0-9]+/g,"_");
       let score=0;
+      if(key==="status_entity"&&/(calibration|self_test)_status$/.test(slug))continue;
       patterns.forEach((pattern,index)=>{if(pattern.test(slug))score=Math.max(score,(patterns.length-index)*10);else if(pattern.test(text))score=Math.max(score,patterns.length-index);});
+      if(key==="status_entity"&&entry.entity_id.startsWith("binary_sensor."))score+=10;
       const expectedClass=DEVICE_CLASSES[key];
       if(expectedClass&&expectedClass===hass.states[entry.entity_id]?.attributes?.device_class)score=Math.max(score,5);
       if(score>0&&key.startsWith("last_")&&slug.includes("last_"))score+=20;
@@ -88,8 +91,14 @@ async function populateFromDevice(config,hass){
   return result;
 }
 
+function normalizeConfig(config){
+  const result={...DEFAULTS,...config};
+  if(result.ups_entity&&/(calibration|self_test)_status$/.test(result.status_entity||""))delete result.status_entity;
+  return result;
+}
+
 class WaveshareUpsCardEditor extends HTMLElement {
-  setConfig(config){ this.config={...DEFAULTS,...config}; this.render(); }
+  setConfig(config){ this.config=normalizeConfig(config); this.render(); }
   set hass(hass){ this._hass=hass; this.render(); }
   render(){
     if(!this._hass||!this.config)return;
@@ -114,7 +123,7 @@ class WaveshareUpsCard extends HTMLElement {
   constructor(){super();this.attachShadow({mode:"open"});}
   static getStubConfig(){return {...DEFAULTS};}
   static getConfigElement(){return document.createElement("waveshare-ups-card-editor");}
-  setConfig(config){if(!config)throw Error("Invalid configuration");this.config={...DEFAULTS,...config};this.resolvedConfig=null;this.discoveryKey=null;this.discover();this.render();}
+  setConfig(config){if(!config)throw Error("Invalid configuration");this.config=normalizeConfig(config);this.resolvedConfig=null;this.discoveryKey=null;this.discover();this.render();}
   set hass(hass){this._hass=hass;this.discover();this.render();}
   async discover(){
     if(!this._hass||!this.config?.ups_entity)return;
@@ -124,7 +133,7 @@ class WaveshareUpsCard extends HTMLElement {
     this.resolvedConfig=await populateFromDevice(this.config,this._hass);
     if(key===this.discoveryKey)this.render();
   }
-  getCardSize(){return this.config?.layout==="minimal"?2:this.config?.layout==="compact"?4:6;}
+  getCardSize(){return this.config?.layout==="full"?6:this.config?.layout==="compact"?5:this.config?.layout==="minimal"?2:4;}
   getGridOptions(){const rows=this.getCardSize();return{rows,columns:6,min_rows:2,min_columns:3};}
   obj(id){return id&&this._hass?this._hass.states[id]:undefined;}
   state(id,fallback="-"){const o=this.obj(id);if(!o||["unknown","unavailable"].includes(o.state))return fallback;const u=o.attributes?.unit_of_measurement;return u?`${o.state} ${u}`:o.state;}
@@ -138,8 +147,9 @@ class WaveshareUpsCard extends HTMLElement {
     if(meaningful(fault))return{label:"Fault",sub:this.state(config.battery_fault_entity),cls:"danger",icon:"mdi:alert-octagon"};
     if(meaningful(maint))return{label:"Maintenance",sub:this.state(config.maintenance_entity),cls:"warn",icon:"mdi:wrench-clock"};
     if(source.includes("battery")||status.includes("battery"))return{label:"On battery",sub:"Utility power is not supplying output",cls:"warn",icon:"mdi:power-plug-off"};
-    if(batt.includes("charging"))return{label:"Online",sub:"Utility power - Charging",cls:"good",icon:"mdi:flash"};
-    if(status.includes("online"))return{label:"Online",sub:"Utility power",cls:"good",icon:"mdi:power-plug"};
+    if(batt.includes("charging")||batt==="on")return{label:"Online",sub:"Utility power - Charging",cls:"good",icon:"mdi:flash"};
+    if(status.includes("online")||status==="on"||source.includes("utility"))return{label:"Online",sub:"Utility power",cls:"good",icon:"mdi:power-plug"};
+    if(status==="off")return{label:"Offline",sub:"UPS is unavailable",cls:"danger",icon:"mdi:power-plug-off"};
     return{label:this.state(config.status_entity),sub:this.state(config.output_source_entity),cls:"neutral",icon:"mdi:server"};
   }
   more(id){if(!id)return;const e=new Event("hass-more-info",{bubbles:true,composed:true});e.detail={entityId:id};this.dispatchEvent(e);}
@@ -150,7 +160,8 @@ class WaveshareUpsCard extends HTMLElement {
   render(){
     if(!this._hass||!this.config)return;
     const c=this.resolvedConfig||this.config,s=this.status(c),raw=this.number(c.battery_entity),battery=raw===null?null:Math.max(0,Math.min(100,raw));
-    const circumference=2*Math.PI*44,dash=((battery??0)/100)*circumference,layout=c.layout||"auto",minimal=layout==="minimal",compact=layout==="compact";
+    const circumference=2*Math.PI*44,dash=((battery??0)/100)*circumference,layout=c.layout||"auto",minimal=layout==="minimal",compact=layout==="compact",full=layout==="full";
+    const batteryState=this.raw(c.battery_state_entity).toLowerCase(),batteryLabel=batteryState==="on"?"Charging":batteryState==="off"?"Battery":this.state(c.battery_state_entity,"Battery");
     const metrics=this.metric("Battery Voltage",c.battery_voltage_entity,"mdi:lightning-bolt")+this.metric("Supply Voltage",c.supply_voltage_entity,"mdi:sine-wave")+this.metric("Current",c.current_entity,"mdi:current-dc")+this.metric("Power",c.power_entity,"mdi:gauge");
     const health=this.row("Battery Age",c.battery_age_entity)+this.row("Fault",c.battery_fault_entity)+this.row("Maintenance",c.maintenance_entity)+this.row("Last Battery Change",c.last_battery_change_entity);
     const tests=this.row("Self-Test",c.self_test_status_entity)+this.row("Last Self-Test",c.last_self_test_status_entity)+this.row("Last Self-Test Date",c.last_self_test_date_entity)+this.row("Calibration",c.calibration_status_entity)+this.row("Elapsed",c.calibration_elapsed_entity)+this.row("Last Calibration",c.last_calibration_status_entity)+this.row("Last Runtime Calibration",c.last_runtime_calibration_entity);
@@ -159,14 +170,14 @@ class WaveshareUpsCard extends HTMLElement {
       :host{display:block;min-width:0}ha-card{container-type:inline-size;overflow:hidden}*{box-sizing:border-box}button{font:inherit}.card{padding:18px;min-width:0}.compact,.minimal{padding:14px}
       .header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}.heading{min-width:0}.title{font-size:20px;font-weight:650;overflow-wrap:anywhere}.subtitle{margin-top:4px;color:var(--secondary-text-color);font-size:13px;overflow-wrap:anywhere}
       .badge{flex:none;display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:999px;background:var(--secondary-background-color);font-size:12px;font-weight:700;white-space:nowrap}.badge.good{color:var(--success-color,#0f9d58)}.badge.warn{color:var(--warning-color,#f4b400)}.badge.danger{color:var(--error-color,#db4437)}
-      .hero{display:grid;grid-template-columns:132px minmax(0,1fr);align-items:center;gap:18px;min-width:0}.gauge{position:relative;width:132px;height:132px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:inherit;cursor:pointer}svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}circle{fill:none;stroke-width:10}.track{stroke:var(--divider-color);opacity:.65}.progress{stroke-linecap:round}.gauge-value{z-index:1;text-align:center}.gauge-value strong{display:block;font-size:30px;line-height:1}.gauge-value span{display:block;max-width:90px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--secondary-text-color);font-size:12px}
+      .hero{display:grid;grid-template-columns:100px minmax(0,1fr);align-items:center;gap:14px;min-width:0}.gauge{position:relative;width:100px;height:100px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:inherit;cursor:pointer}.full .hero{grid-template-columns:132px minmax(0,1fr);gap:18px}.full .gauge{width:132px;height:132px}svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}circle{fill:none;stroke-width:10}.track{stroke:var(--divider-color);opacity:.65}.progress{stroke-linecap:round}.gauge-value{z-index:1;text-align:center}.gauge-value strong{display:block;font-size:26px;line-height:1}.full .gauge-value strong{font-size:30px}.gauge-value span{display:block;max-width:90px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--secondary-text-color);font-size:12px}
       .runtime{min-width:0;padding:16px;border-radius:16px;background:var(--secondary-background-color)}.label{color:var(--secondary-text-color);font-size:13px}.runtime strong{display:block;margin-top:5px;font-size:30px;overflow-wrap:anywhere}.detail{margin-top:7px;color:var(--secondary-text-color);font-size:13px;overflow-wrap:anywhere}
       .metrics,.actions{display:grid;grid-template-columns:repeat(${Number(c.metric_columns)===1?1:2},minmax(0,1fr));gap:10px;margin-top:16px}.metric{min-width:0;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--divider-color);border-radius:14px;background:transparent;color:inherit;text-align:left;cursor:pointer}.metric ha-icon{flex:none;color:var(--secondary-text-color)}.metric div{min-width:0}.metric span{display:block;color:var(--secondary-text-color);font-size:12px}.metric strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .section{margin-top:16px;padding-top:14px;border-top:1px solid var(--divider-color)}.section-title{margin-bottom:8px;color:var(--secondary-text-color);font-size:13px;font-weight:700;text-transform:uppercase}.row{width:100%;min-width:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:6px 0;border:0;background:transparent;color:inherit;cursor:pointer}.row span{color:var(--secondary-text-color);text-align:left}.row strong{min-width:0;overflow-wrap:anywhere;text-align:right}.action{min-width:0;display:flex;align-items:center;justify-content:center;gap:7px;padding:12px 8px;border:0;border-radius:13px;background:var(--secondary-background-color);color:inherit;font-weight:650;cursor:pointer}.action.primary{color:var(--text-primary-color,white);background:var(--primary-color)}.action.danger{color:var(--error-color,#db4437)}.action:disabled{opacity:.45}.footer{margin-top:14px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--secondary-text-color);font-size:12px}
-      @container(max-width:420px){.hero{grid-template-columns:100px minmax(0,1fr);gap:12px}.gauge{width:100px;height:100px}.gauge-value strong,.runtime strong{font-size:24px}.runtime{padding:12px}}@container(max-width:310px){.header{flex-direction:column}.hero{grid-template-columns:1fr;justify-items:center}.runtime{width:100%;text-align:center}.metrics,.actions{grid-template-columns:1fr}}
+      @container(min-width:700px){.auto .metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}@container(max-width:420px){.hero,.full .hero{grid-template-columns:90px minmax(0,1fr);gap:12px}.gauge,.full .gauge{width:90px;height:90px}.gauge-value strong,.runtime strong{font-size:22px}.runtime{padding:12px}}@container(max-width:310px){.header{flex-direction:column}.hero,.full .hero{grid-template-columns:1fr;justify-items:center}.runtime{width:100%;text-align:center}.metrics,.actions{grid-template-columns:1fr}}
     </style><ha-card><div class="card ${esc(layout)}"><div class="header"><div class="heading"><div class="title">${esc(c.title)}</div>${minimal?"":`<div class="subtitle">${esc(s.sub)}</div>`}</div>${c.show_status_badge?`<div class="badge ${s.cls}"><ha-icon icon="${s.icon}"></ha-icon>${esc(s.label)}</div>`:""}</div>
-      <div class="hero"><button class="gauge" data-entity="${esc(c.battery_entity||"")}" aria-label="Battery ${battery??"unavailable"} percent"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="44"/><circle class="progress" cx="50" cy="50" r="44" style="stroke:${this.color(battery)};stroke-dasharray:${dash} ${circumference}"/></svg><div class="gauge-value"><strong>${battery===null?"--":`${Math.round(battery)}%`}</strong><span>${esc(this.state(c.battery_state_entity,"Battery"))}</span></div></button><div class="runtime"><div class="label">Estimated Runtime</div><strong>${esc(this.state(c.runtime_entity))}</strong>${minimal?"":`<div class="detail">Output: ${esc(this.state(c.output_entity))}<br>Source: ${esc(this.state(c.output_source_entity))}</div>`}</div></div>
-      ${!minimal&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&!compact&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${!minimal&&!compact&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="section"><div class="section-title">Controls</div><div class="actions">${actions}</div></div>`:""}${!minimal&&c.show_footer?`<div class="footer"><span>Status: ${esc(this.state(c.status_entity))}</span><span>Waveshare UPS Card</span></div>`:""}</div></ha-card>`;
+      <div class="hero"><button class="gauge" data-entity="${esc(c.battery_entity||"")}" aria-label="Battery ${battery??"unavailable"} percent"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="44"/><circle class="progress" cx="50" cy="50" r="44" style="stroke:${this.color(battery)};stroke-dasharray:${dash} ${circumference}"/></svg><div class="gauge-value"><strong>${battery===null?"--":`${Math.round(battery)}%`}</strong><span>${esc(batteryLabel)}</span></div></button><div class="runtime"><div class="label">Estimated Runtime</div><strong>${esc(this.state(c.runtime_entity))}</strong>${minimal?"":`<div class="detail">Output: ${esc(this.state(c.output_entity))}<br>Source: ${esc(this.state(c.output_source_entity))}</div>`}</div></div>
+      ${!minimal&&metrics?`<div class="metrics">${metrics}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}${(full||compact)&&c.show_actions&&actions?`<div class="section"><div class="section-title">Controls</div><div class="actions">${actions}</div></div>`:""}${!minimal&&c.show_footer?`<div class="footer"><span>Status: ${esc(s.label)}</span><span>Waveshare UPS Card</span></div>`:""}</div></ha-card>`;
     this.shadowRoot.querySelectorAll("[data-entity]").forEach(el=>el.addEventListener("click",()=>this.more(el.dataset.entity)));
     this.shadowRoot.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>this.press(el.dataset.action,el.dataset.label)));
   }
