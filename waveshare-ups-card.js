@@ -1,4 +1,4 @@
-const VERSION = "2.3.1";
+const VERSION = "2.4.0";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
@@ -133,7 +133,7 @@ class WaveshareUpsCard extends HTMLElement {
     this.resolvedConfig=await populateFromDevice(this.config,this._hass);
     if(key===this.discoveryKey)this.render();
   }
-  getCardSize(){return this.config?.layout==="full"?6:this.config?.layout==="compact"?5:this.config?.layout==="minimal"?2:4;}
+  getCardSize(){return this.config?.layout==="full"?6:this.config?.layout==="compact"?3:this.config?.layout==="minimal"?2:4;}
   getGridOptions(){return{rows:"auto",columns:6,min_rows:2,min_columns:3};}
   obj(id){return id&&this._hass?this._hass.states[id]:undefined;}
   state(id,fallback="-"){const o=this.obj(id);if(!o||["unknown","unavailable"].includes(o.state))return fallback;const u=o.attributes?.unit_of_measurement;return u?`${o.state} ${u}`:o.state;}
@@ -177,7 +177,7 @@ class WaveshareUpsCard extends HTMLElement {
     const tests=this.row("Last Self-Test",c.last_self_test_status_entity)+this.row("Last Self-Test Date",c.last_self_test_date_entity)+this.row("Calibration",c.calibration_status_entity)+this.row("Elapsed",c.calibration_elapsed_entity)+this.row("Last Calibration",c.last_calibration_status_entity)+this.row("Last Runtime Calibration",c.last_runtime_calibration_entity);
     const actions=this.action("Start Self-Test",c.start_self_test_button,"mdi:clipboard-pulse","primary")+this.action("Cancel Self-Test",c.cancel_self_test_button,"mdi:cancel","danger")+this.action("Start Calibration",c.start_runtime_calibration_button,"mdi:timer-sync")+this.action("Cancel Calibration",c.cancel_runtime_calibration_button,"mdi:timer-off","danger")+this.action("Battery Replaced",c.battery_replaced_button,"mdi:battery-sync");
     this.shadowRoot.innerHTML=`<style>
-      :host{display:block;min-width:0}ha-card{container-type:inline-size;overflow:hidden}*{box-sizing:border-box}button{font:inherit}.card{padding:18px;min-width:0}.compact,.minimal{padding:14px}
+      :host{display:block;min-width:0}ha-card{container-type:inline-size;overflow:hidden}*{box-sizing:border-box}button{font:inherit}.card{padding:18px;min-width:0}
       .header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}.heading{min-width:0}.title{font-size:20px;font-weight:650;overflow-wrap:anywhere}.subtitle{margin-top:4px;color:var(--secondary-text-color);font-size:13px;overflow-wrap:anywhere}
       .badge{flex:none;display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:999px;background:var(--secondary-background-color);font-size:12px;font-weight:700;white-space:nowrap}.badge.good{color:var(--success-color,#0f9d58)}.badge.warn{color:var(--warning-color,#f4b400)}.badge.danger{color:var(--error-color,#db4437)}
       .hero{display:flex;align-items:center;gap:18px;min-width:0;flex-wrap:wrap}.gauge{position:relative;flex:0 0 132px;width:132px;height:132px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:inherit;cursor:pointer}svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}circle{fill:none;stroke-width:10}.track{stroke:var(--divider-color);opacity:.65}.progress{stroke-linecap:round}.gauge-value{z-index:1;text-align:center}.gauge-value strong{display:block;font-size:30px;line-height:1}.gauge-value span{display:block;max-width:90px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--secondary-text-color);font-size:12px}
@@ -188,7 +188,7 @@ class WaveshareUpsCard extends HTMLElement {
       @container(min-width:700px){.auto .metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}@container(max-width:520px){.hero{justify-content:center}.runtime{flex-basis:220px}.indicators{flex-basis:100%;justify-content:center}}@container(max-width:310px){.header{flex-direction:column}.runtime{width:100%;max-width:none;text-align:center}.metrics{grid-template-columns:1fr}.indicator span{white-space:normal;text-align:center}}
     </style><ha-card><div class="card ${esc(layout)}"><div class="header"><div class="heading"><div class="title">${esc(c.title)}</div>${minimal?"":`<div class="subtitle">${esc(s.sub)}</div>`}</div>${c.show_status_badge?`<div class="badge ${s.cls}"><ha-icon icon="${s.icon}"></ha-icon>${esc(s.label)}</div>`:""}</div>
       <div class="hero"><button class="gauge" data-entity="${esc(c.battery_entity||"")}" aria-label="Battery ${battery??"unavailable"} percent"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="44"/><circle class="progress" cx="50" cy="50" r="44" style="stroke:${this.color(battery)};stroke-dasharray:${dash} ${circumference}"/></svg><div class="gauge-value"><strong>${battery===null?"--":`${Math.round(battery)}%`}</strong><span>${esc(batteryLabel)}</span></div></button><div class="runtime"><div class="label">Estimated Runtime</div><strong>${esc(this.state(c.runtime_entity))}</strong>${minimal?"":`<div class="detail">Output: ${esc(this.state(c.output_entity))}<br>Source: ${esc(this.state(c.output_source_entity))}</div>`}</div>${indicators?`<div class="indicators">${indicators}</div>`:""}</div>
-      ${!minimal&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="icon-controls">${actions}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}</div></ha-card>`;
+      ${!minimal&&!compact&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="icon-controls">${actions}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}</div></ha-card>`;
     this.shadowRoot.querySelectorAll("[data-entity]").forEach(el=>el.addEventListener("click",()=>this.more(el.dataset.entity)));
     this.shadowRoot.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>this.press(el.dataset.action,el.dataset.label)));
   }
