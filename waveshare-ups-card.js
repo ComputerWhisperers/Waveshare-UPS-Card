@@ -1,4 +1,4 @@
-const VERSION = "2.4.0";
+const VERSION = "2.5.0";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
@@ -136,7 +136,33 @@ class WaveshareUpsCard extends HTMLElement {
   getCardSize(){return this.config?.layout==="full"?6:this.config?.layout==="compact"?3:this.config?.layout==="minimal"?2:4;}
   getGridOptions(){return{rows:"auto",columns:6,min_rows:2,min_columns:3};}
   obj(id){return id&&this._hass?this._hass.states[id]:undefined;}
-  state(id,fallback="-"){const o=this.obj(id);if(!o||["unknown","unavailable"].includes(o.state))return fallback;const u=o.attributes?.unit_of_measurement;return u?`${o.state} ${u}`:o.state;}
+  titleCase(value){return String(value).replaceAll(/[_-]+/g," ").replaceAll(/\b\w/g,letter=>letter.toUpperCase());}
+  duration(value){
+    const totalMinutes=Math.round(Number(value)*60);
+    if(!Number.isFinite(totalMinutes))return value;
+    const hours=Math.floor(totalMinutes/60),minutes=totalMinutes%60;
+    return hours&&minutes?`${hours} h ${minutes} min`:hours?`${hours} h`:`${minutes} min`;
+  }
+  date(value){
+    const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!match)return value;
+    const date=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]));
+    const locale=this._hass?.locale||{},preference=locale.date_format||"language";
+    const formatter=new Intl.DateTimeFormat(preference==="system"?undefined:locale.language,{year:"numeric",month:"numeric",day:"numeric"});
+    if(preference==="language"||preference==="system")return formatter.format(date);
+    const parts=formatter.formatToParts(date),part=type=>parts.find(item=>item.type===type)?.value||"";
+    const separator=parts.find(item=>item.type==="literal")?.value||"/";
+    const values={DMY:[part("day"),part("month"),part("year")],MDY:[part("month"),part("day"),part("year")],YMD:[part("year"),part("month"),part("day")]};
+    return (values[preference]||values.MDY).join(separator);
+  }
+  state(id,fallback="-"){
+    const o=this.obj(id);if(!o||["unknown","unavailable"].includes(o.state))return fallback;
+    const deviceClass=o.attributes?.device_class,unit=o.attributes?.unit_of_measurement;
+    if(deviceClass==="date")return this.date(o.state);
+    if(deviceClass==="duration"&&["h","hr","hours"].includes(unit))return this.duration(o.state);
+    if(deviceClass==="enum")return this.titleCase(o.state);
+    return unit?`${o.state} ${unit}`:o.state;
+  }
   raw(id){return this.obj(id)?.state??"";}
   number(id){const n=Number(this.raw(id));return Number.isFinite(n)?n:null;}
   color(n){if(n===null)return"var(--disabled-text-color,#999)";if(n<=this.config.low_battery_threshold)return"var(--error-color,#db4437)";if(n<=this.config.warning_battery_threshold)return"var(--warning-color,#f4b400)";return n<80?"var(--accent-color,#03a9f4)":"var(--success-color,#0f9d58)";}
