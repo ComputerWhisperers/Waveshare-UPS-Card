@@ -36,7 +36,7 @@ current_entity: sensor.waveshare_ups_current
 power_entity: sensor.waveshare_ups_power
 ```
 
-The default `auto` layout is a short summary showing the battery, runtime, operating state, and electrical metrics. It responds to the card's actual grid width, including narrow Home Assistant Sections layouts. `compact` adds controls, `full` adds controls plus battery health and test history, and `minimal` shows only the header, battery, and runtime.
+The default `auto` layout is a short summary showing the battery, runtime, operating state, electrical metrics, health indicators, and icon controls. It responds to the card's actual grid width, including narrow Home Assistant Sections layouts. `full` adds battery health and test history, while `minimal` keeps the primary gauge and health indicators.
 
 ## Options
 
