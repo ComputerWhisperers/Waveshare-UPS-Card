@@ -1,6 +1,6 @@
-const VERSION = "2.3.0";
+const VERSION = "2.3.1";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
-  show_actions:true, show_battery_health:true, show_test_history:true, show_footer:true, show_status_badge:true,
+  show_actions:true, show_battery_health:true, show_test_history:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
 
 const FIELDS = [
@@ -22,14 +22,14 @@ const FIELDS = [
 const LABELS = Object.fromEntries(FIELDS.map(([key,label])=>[key,label]));
 Object.assign(LABELS,{title:"Card title",layout:"Layout",metric_columns:"Metric columns",show_actions:"Show controls",
   show_battery_health:"Show battery health",show_test_history:"Show test and calibration",show_status_badge:"Show status badge",
-  show_footer:"Show footer",low_battery_threshold:"Low battery threshold",warning_battery_threshold:"Warning battery threshold",
+  low_battery_threshold:"Low battery threshold",warning_battery_threshold:"Warning battery threshold",
   ups_entity:"Main UPS entity"});
 const SCHEMA = [
   {name:"title",selector:{text:{}}},
   {name:"ups_entity",selector:{entity:{}}},
   {name:"layout",selector:{select:{options:[{value:"auto",label:"Auto (recommended)"},{value:"full",label:"Full"},{value:"compact",label:"Compact"},{value:"minimal",label:"Minimal"}]}}},
   {name:"metric_columns",selector:{select:{options:[{value:1,label:"1 column"},{value:2,label:"2 columns"}]}}},
-  ...["show_status_badge","show_battery_health","show_test_history","show_actions","show_footer"].map(name=>({name,selector:{boolean:{}}})),
+  ...["show_status_badge","show_battery_health","show_test_history","show_actions"].map(name=>({name,selector:{boolean:{}}})),
   {name:"low_battery_threshold",selector:{number:{min:0,max:100,mode:"box",unit_of_measurement:"%"}}},
   {name:"warning_battery_threshold",selector:{number:{min:0,max:100,mode:"box",unit_of_measurement:"%"}}},
   ...FIELDS.map(([name,,domain])=>({name,selector:{entity:{domain}}}))
@@ -134,7 +134,7 @@ class WaveshareUpsCard extends HTMLElement {
     if(key===this.discoveryKey)this.render();
   }
   getCardSize(){return this.config?.layout==="full"?6:this.config?.layout==="compact"?5:this.config?.layout==="minimal"?2:4;}
-  getGridOptions(){const rows=this.getCardSize();return{rows,columns:6,min_rows:2,min_columns:3};}
+  getGridOptions(){return{rows:"auto",columns:6,min_rows:2,min_columns:3};}
   obj(id){return id&&this._hass?this._hass.states[id]:undefined;}
   state(id,fallback="-"){const o=this.obj(id);if(!o||["unknown","unavailable"].includes(o.state))return fallback;const u=o.attributes?.unit_of_measurement;return u?`${o.state} ${u}`:o.state;}
   raw(id){return this.obj(id)?.state??"";}
@@ -184,11 +184,11 @@ class WaveshareUpsCard extends HTMLElement {
       .runtime{flex:0 1 260px;min-width:180px;max-width:260px;padding:16px;border-radius:16px;background:var(--secondary-background-color)}.label{color:var(--secondary-text-color);font-size:13px}.runtime strong{display:block;margin-top:5px;font-size:28px;overflow-wrap:anywhere}.detail{margin-top:7px;color:var(--secondary-text-color);font-size:13px;overflow-wrap:anywhere}
       .indicators{flex:1 1 260px;display:flex;align-items:center;justify-content:flex-start;gap:18px;flex-wrap:wrap;min-width:0}.indicator{min-width:76px;display:grid;justify-items:center;gap:5px;padding:8px;border:0;background:transparent;color:var(--secondary-text-color);cursor:pointer}.indicator ha-icon{--mdc-icon-size:27px}.indicator span{font-size:11px;white-space:nowrap}.indicator.good{color:var(--success-color,#0f9d58)}.indicator.warn{color:var(--warning-color,#f4b400)}.indicator.danger{color:var(--error-color,#db4437)}
       .metrics{display:grid;grid-template-columns:repeat(${Number(c.metric_columns)===1?1:2},minmax(0,1fr));gap:10px;margin-top:16px}.metric{min-width:0;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--divider-color);border-radius:14px;background:transparent;color:inherit;text-align:left;cursor:pointer}.metric ha-icon{flex:none;color:var(--secondary-text-color)}.metric div{min-width:0}.metric span{display:block;color:var(--secondary-text-color);font-size:12px}.metric strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .section{margin-top:16px;padding-top:14px;border-top:1px solid var(--divider-color)}.section-title{margin-bottom:8px;color:var(--secondary-text-color);font-size:13px;font-weight:700;text-transform:uppercase}.row{width:100%;min-width:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:6px 0;border:0;background:transparent;color:inherit;cursor:pointer}.row span{color:var(--secondary-text-color);text-align:left}.row strong{min-width:0;overflow-wrap:anywhere;text-align:right}.icon-controls{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:14px;padding-top:12px;border-top:1px solid var(--divider-color)}.action{width:42px;height:42px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:var(--secondary-background-color);color:var(--primary-text-color);cursor:pointer}.action ha-icon{--mdc-icon-size:24px}.action span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.action.primary{color:var(--primary-color)}.action.danger{color:var(--error-color,#db4437)}.action:disabled{opacity:.35}.footer{margin-top:12px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--secondary-text-color);font-size:12px}
+      .section{margin-top:16px;padding-top:14px;border-top:1px solid var(--divider-color)}.section-title{margin-bottom:8px;color:var(--secondary-text-color);font-size:13px;font-weight:700;text-transform:uppercase}.row{width:100%;min-width:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:6px 0;border:0;background:transparent;color:inherit;cursor:pointer}.row span{color:var(--secondary-text-color);text-align:left}.row strong{min-width:0;overflow-wrap:anywhere;text-align:right}.icon-controls{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:14px;padding-top:12px;border-top:1px solid var(--divider-color)}.action{width:42px;height:42px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:var(--secondary-background-color);color:var(--primary-text-color);cursor:pointer}.action ha-icon{--mdc-icon-size:24px}.action span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.action.primary{color:var(--primary-color)}.action.danger{color:var(--error-color,#db4437)}.action:disabled{opacity:.35}
       @container(min-width:700px){.auto .metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}@container(max-width:520px){.hero{justify-content:center}.runtime{flex-basis:220px}.indicators{flex-basis:100%;justify-content:center}}@container(max-width:310px){.header{flex-direction:column}.runtime{width:100%;max-width:none;text-align:center}.metrics{grid-template-columns:1fr}.indicator span{white-space:normal;text-align:center}}
     </style><ha-card><div class="card ${esc(layout)}"><div class="header"><div class="heading"><div class="title">${esc(c.title)}</div>${minimal?"":`<div class="subtitle">${esc(s.sub)}</div>`}</div>${c.show_status_badge?`<div class="badge ${s.cls}"><ha-icon icon="${s.icon}"></ha-icon>${esc(s.label)}</div>`:""}</div>
       <div class="hero"><button class="gauge" data-entity="${esc(c.battery_entity||"")}" aria-label="Battery ${battery??"unavailable"} percent"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="44"/><circle class="progress" cx="50" cy="50" r="44" style="stroke:${this.color(battery)};stroke-dasharray:${dash} ${circumference}"/></svg><div class="gauge-value"><strong>${battery===null?"--":`${Math.round(battery)}%`}</strong><span>${esc(batteryLabel)}</span></div></button><div class="runtime"><div class="label">Estimated Runtime</div><strong>${esc(this.state(c.runtime_entity))}</strong>${minimal?"":`<div class="detail">Output: ${esc(this.state(c.output_entity))}<br>Source: ${esc(this.state(c.output_source_entity))}</div>`}</div>${indicators?`<div class="indicators">${indicators}</div>`:""}</div>
-      ${!minimal&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="icon-controls">${actions}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}${!minimal&&c.show_footer?`<div class="footer"><span>Status: ${esc(s.label)}</span><span>Waveshare UPS Card</span></div>`:""}</div></ha-card>`;
+      ${!minimal&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="icon-controls">${actions}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}</div></ha-card>`;
     this.shadowRoot.querySelectorAll("[data-entity]").forEach(el=>el.addEventListener("click",()=>this.more(el.dataset.entity)));
     this.shadowRoot.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>this.press(el.dataset.action,el.dataset.label)));
   }
