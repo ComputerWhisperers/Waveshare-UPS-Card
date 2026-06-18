@@ -19,7 +19,7 @@ A responsive Home Assistant dashboard card for Waveshare UPS battery, health, te
 
 ## Configuration
 
-Add the card, open its **Configuration** tab, and choose the entities created by the Waveshare UPS integration. Every option is available in the visual editor. Unconfigured rows and sections are hidden.
+Add the card, open its **Configuration** tab, and select any entity belonging to the UPS as the **Main UPS entity**. The card uses Home Assistant's device registry to populate the related sensors and buttons automatically. You can override any discovered value with the individual selectors. If no main entity is selected, all individual selectors continue to work on their own. Unconfigured rows and sections are hidden.
 
 YAML remains supported, but is not required:
 
@@ -27,6 +27,7 @@ YAML remains supported, but is not required:
 type: custom:waveshare-ups-card
 title: UPS Power
 layout: auto
+ups_entity: sensor.waveshare_ups_status
 battery_entity: sensor.waveshare_ups_battery_capacity
 runtime_entity: sensor.waveshare_ups_runtime
 status_entity: sensor.waveshare_ups_status
@@ -44,6 +45,7 @@ The default `auto` layout responds to the card's actual grid width, including na
 | `title` | Card title; defaults to `UPS Power` |
 | `layout` | `auto`, `full`, `compact`, or `minimal` |
 | `metric_columns` | One or two telemetry columns |
+| `ups_entity` | Any entity belonging to the UPS device; used for automatic discovery |
 | `battery_entity` | Battery percentage sensor |
 | `runtime_entity` | Estimated runtime sensor |
 | `status_entity` | UPS operating-status sensor |

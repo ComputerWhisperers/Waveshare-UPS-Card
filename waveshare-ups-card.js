@@ -1,4 +1,4 @@
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_footer:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
@@ -22,9 +22,11 @@ const FIELDS = [
 const LABELS = Object.fromEntries(FIELDS.map(([key,label])=>[key,label]));
 Object.assign(LABELS,{title:"Card title",layout:"Layout",metric_columns:"Metric columns",show_actions:"Show controls",
   show_battery_health:"Show battery health",show_test_history:"Show test and calibration",show_status_badge:"Show status badge",
-  show_footer:"Show footer",low_battery_threshold:"Low battery threshold",warning_battery_threshold:"Warning battery threshold"});
+  show_footer:"Show footer",low_battery_threshold:"Low battery threshold",warning_battery_threshold:"Warning battery threshold",
+  ups_entity:"Main UPS entity"});
 const SCHEMA = [
   {name:"title",selector:{text:{}}},
+  {name:"ups_entity",selector:{entity:{}}},
   {name:"layout",selector:{select:{options:[{value:"auto",label:"Auto (recommended)"},{value:"full",label:"Full"},{value:"compact",label:"Compact"},{value:"minimal",label:"Minimal"}]}}},
   {name:"metric_columns",selector:{select:{options:[{value:1,label:"1 column"},{value:2,label:"2 columns"}]}}},
   ...["show_status_badge","show_battery_health","show_test_history","show_actions","show_footer"].map(name=>({name,selector:{boolean:{}}})),
@@ -34,18 +36,72 @@ const SCHEMA = [
 ];
 const esc = value => String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 
+const MATCHERS = {
+  battery_entity:[/battery_(capacity|percentage|level)/,/battery$/,/capacity$/],
+  runtime_entity:[/estimated_runtime/,/runtime/,/time_remaining/], status_entity:[/ups_status$/,/status$/],
+  output_source_entity:[/output_source/,/power_source/], battery_state_entity:[/battery_state/],
+  battery_voltage_entity:[/battery_voltage/], supply_voltage_entity:[/(supply|input)_voltage/],
+  current_entity:[/(^|_)current$/], power_entity:[/(^|_)power$/], output_entity:[/output_(load|percentage)/,/output$/],
+  battery_age_entity:[/battery_age/], battery_fault_entity:[/battery_fault/,/fault$/],
+  maintenance_entity:[/battery_maintenance/,/maintenance/], last_battery_change_entity:[/last_battery_change/],
+  self_test_status_entity:[/^self_test_status$/,/self_test/], last_self_test_status_entity:[/last_self_test_status/],
+  last_self_test_date_entity:[/last_self_test_date/], calibration_status_entity:[/^calibration_status$/],
+  calibration_elapsed_entity:[/calibration_elapsed/], last_calibration_status_entity:[/last_calibration_status/],
+  last_runtime_calibration_entity:[/last_runtime_calibration/], start_self_test_button:[/start_self_test/],
+  cancel_self_test_button:[/cancel_self_test/], start_runtime_calibration_button:[/start_(runtime_)?calibration/],
+  cancel_runtime_calibration_button:[/cancel_(runtime_)?calibration/], battery_replaced_button:[/battery_replaced/]
+};
+const DEVICE_CLASSES = {battery_entity:"battery",runtime_entity:"duration",status_entity:"enum",battery_voltage_entity:"voltage",
+  supply_voltage_entity:"voltage",current_entity:"current",power_entity:"power"};
+
+async function entityRegistry(hass){
+  if(hass.entities&&Object.keys(hass.entities).length){
+    const entries=Object.entries(hass.entities).map(([entity_id,entry])=>({entity_id,...entry}));
+    if(entries.some(entry=>entry.device_id))return entries;
+  }
+  try{return await hass.callWS({type:"config/entity_registry/list"});}catch(error){console.warn("Waveshare UPS Card: entity discovery unavailable",error);return[];}
+}
+
+async function populateFromDevice(config,hass){
+  if(!config.ups_entity)return config;
+  const registry=await entityRegistry(hass),main=registry.find(entry=>entry.entity_id===config.ups_entity);
+  if(!main?.device_id)return config;
+  const deviceEntities=registry.filter(entry=>entry.device_id===main.device_id&&!entry.disabled_by);
+  const result={...config},used=new Set(FIELDS.map(([key])=>config[key]).filter(Boolean));
+  for(const [key,,domain] of FIELDS){
+    if(result[key])continue;
+    const patterns=MATCHERS[key]||[];
+    const candidates=deviceEntities.filter(entry=>entry.entity_id.startsWith(`${domain}.`)&&!used.has(entry.entity_id));
+    let best=null,bestScore=0;
+    for(const entry of candidates){
+      const slug=entry.entity_id.split(".")[1],text=`${slug} ${entry.name||""} ${entry.original_name||""}`.toLowerCase().replaceAll(/[^a-z0-9]+/g,"_");
+      let score=0;
+      patterns.forEach((pattern,index)=>{if(pattern.test(slug))score=Math.max(score,(patterns.length-index)*10);else if(pattern.test(text))score=Math.max(score,patterns.length-index);});
+      const expectedClass=DEVICE_CLASSES[key];
+      if(expectedClass&&expectedClass===hass.states[entry.entity_id]?.attributes?.device_class)score=Math.max(score,5);
+      if(score>0&&key.startsWith("last_")&&slug.includes("last_"))score+=20;
+      if(score>0&&!key.startsWith("last_")&&slug.includes("last_"))score-=20;
+      if(score>bestScore){best=entry.entity_id;bestScore=score;}
+    }
+    if(best){result[key]=best;used.add(best);}
+  }
+  return result;
+}
+
 class WaveshareUpsCardEditor extends HTMLElement {
   setConfig(config){ this.config={...DEFAULTS,...config}; this.render(); }
   set hass(hass){ this._hass=hass; this.render(); }
   render(){
     if(!this._hass||!this.config)return;
     if(!this.form){
-      this.innerHTML='<style>.note{margin:4px 0 14px;color:var(--secondary-text-color);font-size:12px;line-height:1.4}</style><div class="note">Choose the entities created by the Waveshare UPS integration. Unconfigured rows are hidden.</div><ha-form></ha-form>';
+      this.innerHTML='<style>.note{margin:4px 0 14px;color:var(--secondary-text-color);font-size:12px;line-height:1.4}</style><div class="note">Select any entity from the UPS to discover its device entities automatically. Waveshare names are recognized directly; individual selections override discovery.</div><ha-form></ha-form>';
       this.form=this.querySelector("ha-form");
-      this.form.addEventListener("value-changed",event=>{
-        const config={...this.config,...event.detail.value};
+      this.form.addEventListener("value-changed",async event=>{
+        let config={...this.config,...event.detail.value};
         Object.keys(config).forEach(key=>config[key]===""&&delete config[key]);
+        if(config.ups_entity&&config.ups_entity!==this.config.ups_entity)config=await populateFromDevice(config,this._hass);
         this.config=config;
+        this.form.data=config;
         this.dispatchEvent(new CustomEvent("config-changed",{detail:{config},bubbles:true,composed:true}));
       });
     }
@@ -58,8 +114,16 @@ class WaveshareUpsCard extends HTMLElement {
   constructor(){super();this.attachShadow({mode:"open"});}
   static getStubConfig(){return {...DEFAULTS};}
   static getConfigElement(){return document.createElement("waveshare-ups-card-editor");}
-  setConfig(config){if(!config)throw Error("Invalid configuration");this.config={...DEFAULTS,...config};this.render();}
-  set hass(hass){this._hass=hass;this.render();}
+  setConfig(config){if(!config)throw Error("Invalid configuration");this.config={...DEFAULTS,...config};this.resolvedConfig=null;this.discoveryKey=null;this.discover();this.render();}
+  set hass(hass){this._hass=hass;this.discover();this.render();}
+  async discover(){
+    if(!this._hass||!this.config?.ups_entity)return;
+    const key=this.config.ups_entity+FIELDS.map(([field])=>this.config[field]||"").join("|");
+    if(key===this.discoveryKey)return;
+    this.discoveryKey=key;
+    this.resolvedConfig=await populateFromDevice(this.config,this._hass);
+    if(key===this.discoveryKey)this.render();
+  }
   getCardSize(){return this.config?.layout==="minimal"?2:this.config?.layout==="compact"?4:6;}
   getGridOptions(){const rows=this.getCardSize();return{rows,columns:6,min_rows:2,min_columns:3};}
   obj(id){return id&&this._hass?this._hass.states[id]:undefined;}
@@ -67,16 +131,16 @@ class WaveshareUpsCard extends HTMLElement {
   raw(id){return this.obj(id)?.state??"";}
   number(id){const n=Number(this.raw(id));return Number.isFinite(n)?n:null;}
   color(n){if(n===null)return"var(--disabled-text-color,#999)";if(n<=this.config.low_battery_threshold)return"var(--error-color,#db4437)";if(n<=this.config.warning_battery_threshold)return"var(--warning-color,#f4b400)";return n<80?"var(--accent-color,#03a9f4)":"var(--success-color,#0f9d58)";}
-  status(){
-    const status=this.raw(this.config.status_entity).toLowerCase(),source=this.raw(this.config.output_source_entity).toLowerCase();
-    const batt=this.raw(this.config.battery_state_entity).toLowerCase(),fault=this.raw(this.config.battery_fault_entity).toLowerCase();
-    const maint=this.raw(this.config.maintenance_entity).toLowerCase(),meaningful=v=>v&&!['clear','none','off','unknown','unavailable','not required'].includes(v);
-    if(meaningful(fault))return{label:"Fault",sub:this.state(this.config.battery_fault_entity),cls:"danger",icon:"mdi:alert-octagon"};
-    if(meaningful(maint))return{label:"Maintenance",sub:this.state(this.config.maintenance_entity),cls:"warn",icon:"mdi:wrench-clock"};
+  status(config=this.config){
+    const status=this.raw(config.status_entity).toLowerCase(),source=this.raw(config.output_source_entity).toLowerCase();
+    const batt=this.raw(config.battery_state_entity).toLowerCase(),fault=this.raw(config.battery_fault_entity).toLowerCase();
+    const maint=this.raw(config.maintenance_entity).toLowerCase(),meaningful=v=>v&&!['clear','none','off','unknown','unavailable','not required'].includes(v);
+    if(meaningful(fault))return{label:"Fault",sub:this.state(config.battery_fault_entity),cls:"danger",icon:"mdi:alert-octagon"};
+    if(meaningful(maint))return{label:"Maintenance",sub:this.state(config.maintenance_entity),cls:"warn",icon:"mdi:wrench-clock"};
     if(source.includes("battery")||status.includes("battery"))return{label:"On battery",sub:"Utility power is not supplying output",cls:"warn",icon:"mdi:power-plug-off"};
     if(batt.includes("charging"))return{label:"Online",sub:"Utility power - Charging",cls:"good",icon:"mdi:flash"};
     if(status.includes("online"))return{label:"Online",sub:"Utility power",cls:"good",icon:"mdi:power-plug"};
-    return{label:this.state(this.config.status_entity),sub:this.state(this.config.output_source_entity),cls:"neutral",icon:"mdi:server"};
+    return{label:this.state(config.status_entity),sub:this.state(config.output_source_entity),cls:"neutral",icon:"mdi:server"};
   }
   more(id){if(!id)return;const e=new Event("hass-more-info",{bubbles:true,composed:true});e.detail={entityId:id};this.dispatchEvent(e);}
   press(id,label){if(this.obj(id)&&confirm(`Run UPS action: ${label}?`))this._hass.callService("button","press",{entity_id:id});}
@@ -85,7 +149,7 @@ class WaveshareUpsCard extends HTMLElement {
   action(label,id,icon,cls=""){return id?`<button class="action ${cls}" data-action="${esc(id)}" data-label="${label}" ${this.obj(id)?"":"disabled"}><ha-icon icon="${icon}"></ha-icon><span>${label}</span></button>`:"";}
   render(){
     if(!this._hass||!this.config)return;
-    const c=this.config,s=this.status(),raw=this.number(c.battery_entity),battery=raw===null?null:Math.max(0,Math.min(100,raw));
+    const c=this.resolvedConfig||this.config,s=this.status(c),raw=this.number(c.battery_entity),battery=raw===null?null:Math.max(0,Math.min(100,raw));
     const circumference=2*Math.PI*44,dash=((battery??0)/100)*circumference,layout=c.layout||"auto",minimal=layout==="minimal",compact=layout==="compact";
     const metrics=this.metric("Battery Voltage",c.battery_voltage_entity,"mdi:lightning-bolt")+this.metric("Supply Voltage",c.supply_voltage_entity,"mdi:sine-wave")+this.metric("Current",c.current_entity,"mdi:current-dc")+this.metric("Power",c.power_entity,"mdi:gauge");
     const health=this.row("Battery Age",c.battery_age_entity)+this.row("Fault",c.battery_fault_entity)+this.row("Maintenance",c.maintenance_entity)+this.row("Last Battery Change",c.last_battery_change_entity);
