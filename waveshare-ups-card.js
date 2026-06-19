@@ -1,4 +1,4 @@
-const VERSION = "2.5.1";
+const VERSION = "2.5.2";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
@@ -161,7 +161,9 @@ class WaveshareUpsCard extends HTMLElement {
     if(deviceClass==="date")return this.date(o.state);
     if(deviceClass==="duration"&&["h","hr","hours"].includes(unit))return this.duration(o.state);
     if(deviceClass==="enum")return this.titleCase(o.state);
-    return unit?`${o.state} ${unit}`:o.state;
+    const numeric=Number(o.state);
+    const value=Number.isFinite(numeric)?new Intl.NumberFormat(this._hass?.locale?.language,{maximumFractionDigits:2}).format(numeric):o.state;
+    return unit?`${value} ${unit}`:value;
   }
   raw(id){return this.obj(id)?.state??"";}
   number(id){const n=Number(this.raw(id));return Number.isFinite(n)?n:null;}
