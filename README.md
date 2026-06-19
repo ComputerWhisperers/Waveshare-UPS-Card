@@ -41,7 +41,7 @@ The default `auto` layout shows the battery, runtime, operating state, electrica
 Enum states are displayed in title case, hour-based durations are shown as hours and minutes, and date entities follow Home Assistant's configured date-order preference.
 Numeric sensor values are limited to two decimal places.
 
-The card redraws only when its configured UPS entities change and preserves dashboard scroll position during updates, including mobile browser views.
+The card keeps a stable DOM while UPS values update and preserves dashboard scroll position during structural configuration changes, including mobile browser views.
 
 ## Options
 

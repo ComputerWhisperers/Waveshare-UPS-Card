@@ -1,4 +1,4 @@
-const VERSION = "2.5.2";
+const VERSION = "2.5.3";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
@@ -123,7 +123,7 @@ class WaveshareUpsCard extends HTMLElement {
   constructor(){super();this.attachShadow({mode:"open"});}
   static getStubConfig(){return {...DEFAULTS};}
   static getConfigElement(){return document.createElement("waveshare-ups-card-editor");}
-  setConfig(config){if(!config)throw Error("Invalid configuration");this.config=normalizeConfig(config);this.resolvedConfig=null;this.discoveryKey=null;this.renderSignature=null;this.discover();this.render();}
+  setConfig(config){if(!config)throw Error("Invalid configuration");this.config=normalizeConfig(config);this.resolvedConfig=null;this.discoveryKey=null;this.structureSignature=null;this.discover();this.render();}
   set hass(hass){this._hass=hass;this.discover();this.render();}
   async discover(){
     if(!this._hass||!this.config?.ups_entity)return;
@@ -201,21 +201,36 @@ class WaveshareUpsCard extends HTMLElement {
   row(label,id){return id?`<button class="row" data-entity="${esc(id)}"><span>${label}</span><strong>${esc(this.state(id))}</strong></button>`:"";}
   indicator(label,id,icon,alert=false){
     if(!id)return"";
-    const raw=this.raw(id).toLowerCase();
-    let cls="neutral",text=`${label}: ${this.state(id)}`;
+    const info=this.indicatorInfo(label,id,alert);
+    return `<button class="indicator ${info.cls}" data-entity="${esc(id)}" data-label="${esc(label)}" data-alert="${alert}" title="${esc(info.text)}"><ha-icon icon="${icon}"></ha-icon><span>${esc(info.text)}</span></button>`;
+  }
+  indicatorInfo(label,id,alert=false){
+    const raw=this.raw(id).toLowerCase();let cls="neutral",text=`${label}: ${this.state(id)}`;
     if(!this.obj(id)||["unknown","unavailable",""].includes(raw))text=`${label}: Unavailable`;
     else if(alert){cls=raw==="on"?"danger":"good";text=raw==="on"?label:`${label}: Clear`;}
     else if(/progress|running|active/.test(raw))cls="warn";else if(/passed|complete|success/.test(raw))cls="good";
-    return `<button class="indicator ${cls}" data-entity="${esc(id)}" title="${esc(text)}"><ha-icon icon="${icon}"></ha-icon><span>${esc(text)}</span></button>`;
+    return{cls,text};
   }
   action(label,id,icon,cls=""){return id?`<button class="action ${cls}" data-action="${esc(id)}" data-label="${label}" title="${label}" aria-label="${label}" ${this.obj(id)?"":"disabled"}><ha-icon icon="${icon}"></ha-icon><span>${label}</span></button>`:"";}
+  updateValues(c){
+    const root=this.shadowRoot,q=selector=>root.querySelector?.(selector),setText=(selector,value)=>{const element=q(selector);if(element)element.textContent=value;};
+    const status=this.status(c),rawBattery=this.number(c.battery_entity),battery=rawBattery===null?null:Math.max(0,Math.min(100,rawBattery));
+    const batteryState=this.raw(c.battery_state_entity).toLowerCase(),batteryLabel=batteryState==="on"?"Charging":batteryState==="off"?"Battery":this.state(c.battery_state_entity,"Battery");
+    setText("[data-role=subtitle]",status.sub);setText("[data-role=status]",status.label);setText("[data-role=battery]",battery===null?"--":`${Math.round(battery)}%`);
+    setText("[data-role=battery-label]",batteryLabel);setText("[data-role=runtime]",this.state(c.runtime_entity));setText("[data-role=output]",this.state(c.output_entity));setText("[data-role=source]",this.state(c.output_source_entity));
+    q(".gauge")?.setAttribute("aria-label",`Battery ${battery??"unavailable"} percent`);
+    const badge=q(".badge");if(badge){badge.className=`badge ${status.cls}`;badge.querySelector("ha-icon")?.setAttribute("icon",status.icon);}
+    const progress=q(".progress");if(progress){const circumference=2*Math.PI*44;progress.style.stroke=this.color(battery);progress.style.strokeDasharray=`${((battery??0)/100)*circumference} ${circumference}`;}
+    root.querySelectorAll(".metric[data-entity] strong,.row[data-entity] strong").forEach(element=>{const owner=element.closest("[data-entity]");element.textContent=this.state(owner.dataset.entity);});
+    root.querySelectorAll(".indicator[data-entity]").forEach(element=>{const info=this.indicatorInfo(element.dataset.label,element.dataset.entity,element.dataset.alert==="true");element.className=`indicator ${info.cls}`;element.title=info.text;element.querySelector("span").textContent=info.text;});
+    root.querySelectorAll("[data-action]").forEach(element=>element.disabled=!this.obj(element.dataset.action));
+  }
   render(){
     if(!this._hass||!this.config)return;
-    const c=this.resolvedConfig||this.config,s=this.status(c),raw=this.number(c.battery_entity),battery=raw===null?null:Math.max(0,Math.min(100,raw));
-    const entityStates=FIELDS.map(([key])=>c[key]).filter(Boolean).map(id=>{const state=this.obj(id);return[id,state?.state,state?.attributes?.unit_of_measurement,state?.attributes?.device_class];});
-    const signature=JSON.stringify([c,entityStates,this._hass.locale?.language,this._hass.locale?.date_format]);
-    if(signature===this.renderSignature)return;
-    this.renderSignature=signature;
+    const c=this.resolvedConfig||this.config,signature=JSON.stringify(c);
+    if(signature===this.structureSignature){this.updateValues(c);return;}
+    this.structureSignature=signature;
+    const s=this.status(c),raw=this.number(c.battery_entity),battery=raw===null?null:Math.max(0,Math.min(100,raw));
     const restoreScroll=this.preserveScroll();
     const circumference=2*Math.PI*44,dash=((battery??0)/100)*circumference,layout=c.layout||"auto",minimal=layout==="minimal",compact=layout==="compact",full=layout==="full";
     const batteryState=this.raw(c.battery_state_entity).toLowerCase(),batteryLabel=batteryState==="on"?"Charging":batteryState==="off"?"Battery":this.state(c.battery_state_entity,"Battery");
@@ -234,8 +249,8 @@ class WaveshareUpsCard extends HTMLElement {
       .metrics{display:grid;grid-template-columns:repeat(${Number(c.metric_columns)===1?1:2},minmax(0,1fr));gap:10px;margin-top:16px}.metric{min-width:0;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--divider-color);border-radius:14px;background:transparent;color:inherit;text-align:left;cursor:pointer}.metric ha-icon{flex:none;color:var(--secondary-text-color)}.metric div{min-width:0}.metric span{display:block;color:var(--secondary-text-color);font-size:12px}.metric strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .section{margin-top:16px;padding-top:14px;border-top:1px solid var(--divider-color)}.section-title{margin-bottom:8px;color:var(--secondary-text-color);font-size:13px;font-weight:700;text-transform:uppercase}.row{width:100%;min-width:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:6px 0;border:0;background:transparent;color:inherit;cursor:pointer}.row span{color:var(--secondary-text-color);text-align:left}.row strong{min-width:0;overflow-wrap:anywhere;text-align:right}.icon-controls{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:14px;padding-top:12px;border-top:1px solid var(--divider-color)}.action{width:42px;height:42px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:var(--secondary-background-color);color:var(--primary-text-color);cursor:pointer}.action ha-icon{--mdc-icon-size:24px}.action span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.action.primary{color:var(--primary-color)}.action.danger{color:var(--error-color,#db4437)}.action:disabled{opacity:.35}
       @container(min-width:700px){.auto .metrics{grid-template-columns:repeat(4,minmax(0,1fr))}}@container(max-width:520px){.hero{justify-content:center}.runtime{flex-basis:220px}.indicators{flex-basis:100%;justify-content:center}}@container(max-width:310px){.header{flex-direction:column}.runtime{width:100%;max-width:none;text-align:center}.metrics{grid-template-columns:1fr}.indicator span{white-space:normal;text-align:center}}
-    </style><ha-card><div class="card ${esc(layout)}"><div class="header"><div class="heading"><div class="title">${esc(c.title)}</div>${minimal?"":`<div class="subtitle">${esc(s.sub)}</div>`}</div>${c.show_status_badge?`<div class="badge ${s.cls}"><ha-icon icon="${s.icon}"></ha-icon>${esc(s.label)}</div>`:""}</div>
-      <div class="hero"><button class="gauge" data-entity="${esc(c.battery_entity||"")}" aria-label="Battery ${battery??"unavailable"} percent"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="44"/><circle class="progress" cx="50" cy="50" r="44" style="stroke:${this.color(battery)};stroke-dasharray:${dash} ${circumference}"/></svg><div class="gauge-value"><strong>${battery===null?"--":`${Math.round(battery)}%`}</strong><span>${esc(batteryLabel)}</span></div></button><div class="runtime"><div class="label">Estimated Runtime</div><strong>${esc(this.state(c.runtime_entity))}</strong>${minimal?"":`<div class="detail">Output: ${esc(this.state(c.output_entity))}<br>Source: ${esc(this.state(c.output_source_entity))}</div>`}</div>${indicators?`<div class="indicators">${indicators}</div>`:""}</div>
+    </style><ha-card><div class="card ${esc(layout)}"><div class="header"><div class="heading"><div class="title">${esc(c.title)}</div>${minimal?"":`<div class="subtitle" data-role="subtitle">${esc(s.sub)}</div>`}</div>${c.show_status_badge?`<div class="badge ${s.cls}"><ha-icon icon="${s.icon}"></ha-icon><span data-role="status">${esc(s.label)}</span></div>`:""}</div>
+      <div class="hero"><button class="gauge" data-entity="${esc(c.battery_entity||"")}" aria-label="Battery ${battery??"unavailable"} percent"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="44"/><circle class="progress" cx="50" cy="50" r="44" style="stroke:${this.color(battery)};stroke-dasharray:${dash} ${circumference}"/></svg><div class="gauge-value"><strong data-role="battery">${battery===null?"--":`${Math.round(battery)}%`}</strong><span data-role="battery-label">${esc(batteryLabel)}</span></div></button><div class="runtime"><div class="label">Estimated Runtime</div><strong data-role="runtime">${esc(this.state(c.runtime_entity))}</strong>${minimal?"":`<div class="detail">Output: <span data-role="output">${esc(this.state(c.output_entity))}</span><br>Source: <span data-role="source">${esc(this.state(c.output_source_entity))}</span></div>`}</div>${indicators?`<div class="indicators">${indicators}</div>`:""}</div>
       ${!minimal&&!compact&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="icon-controls">${actions}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}</div></ha-card>`;
     this.shadowRoot.querySelectorAll("[data-entity]").forEach(el=>el.addEventListener("click",()=>this.more(el.dataset.entity)));
     this.shadowRoot.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>this.press(el.dataset.action,el.dataset.label)));
