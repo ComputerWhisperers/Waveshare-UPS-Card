@@ -1,4 +1,4 @@
-const VERSION = "2.5.0";
+const VERSION = "2.5.1";
 const DEFAULTS = { type:"custom:waveshare-ups-card", title:"UPS Power", layout:"auto", metric_columns:2,
   show_actions:true, show_battery_health:true, show_test_history:true, show_status_badge:true,
   low_battery_threshold:25, warning_battery_threshold:50 };
@@ -123,7 +123,7 @@ class WaveshareUpsCard extends HTMLElement {
   constructor(){super();this.attachShadow({mode:"open"});}
   static getStubConfig(){return {...DEFAULTS};}
   static getConfigElement(){return document.createElement("waveshare-ups-card-editor");}
-  setConfig(config){if(!config)throw Error("Invalid configuration");this.config=normalizeConfig(config);this.resolvedConfig=null;this.discoveryKey=null;this.discover();this.render();}
+  setConfig(config){if(!config)throw Error("Invalid configuration");this.config=normalizeConfig(config);this.resolvedConfig=null;this.discoveryKey=null;this.renderSignature=null;this.discover();this.render();}
   set hass(hass){this._hass=hass;this.discover();this.render();}
   async discover(){
     if(!this._hass||!this.config?.ups_entity)return;
@@ -180,6 +180,21 @@ class WaveshareUpsCard extends HTMLElement {
   }
   more(id){if(!id)return;const e=new Event("hass-more-info",{bubbles:true,composed:true});e.detail={entityId:id};this.dispatchEvent(e);}
   press(id,label){if(this.obj(id)&&confirm(`Run UPS action: ${label}?`))this._hass.callService("button","press",{entity_id:id});}
+  preserveScroll(){
+    const positions=[],seen=new Set();let node=this;
+    while(node){
+      const root=node.getRootNode?.(),parent=node.parentElement||root?.host;
+      if(!parent||seen.has(parent))break;
+      seen.add(parent);positions.push([parent,parent.scrollTop||0,parent.scrollLeft||0]);node=parent;
+    }
+    if(typeof document!=="undefined"&&document.scrollingElement&&!seen.has(document.scrollingElement)){
+      const element=document.scrollingElement;positions.push([element,element.scrollTop||0,element.scrollLeft||0]);
+    }
+    return()=>positions.forEach(([element,top,left])=>{
+      if(top>0&&element.scrollTop===0)element.scrollTop=top;
+      if(left>0&&element.scrollLeft===0)element.scrollLeft=left;
+    });
+  }
   metric(label,id,icon){return id?`<button class="metric" data-entity="${esc(id)}"><ha-icon icon="${icon}"></ha-icon><div><span>${label}</span><strong>${esc(this.state(id))}</strong></div></button>`:"";}
   row(label,id){return id?`<button class="row" data-entity="${esc(id)}"><span>${label}</span><strong>${esc(this.state(id))}</strong></button>`:"";}
   indicator(label,id,icon,alert=false){
@@ -195,6 +210,11 @@ class WaveshareUpsCard extends HTMLElement {
   render(){
     if(!this._hass||!this.config)return;
     const c=this.resolvedConfig||this.config,s=this.status(c),raw=this.number(c.battery_entity),battery=raw===null?null:Math.max(0,Math.min(100,raw));
+    const entityStates=FIELDS.map(([key])=>c[key]).filter(Boolean).map(id=>{const state=this.obj(id);return[id,state?.state,state?.attributes?.unit_of_measurement,state?.attributes?.device_class];});
+    const signature=JSON.stringify([c,entityStates,this._hass.locale?.language,this._hass.locale?.date_format]);
+    if(signature===this.renderSignature)return;
+    this.renderSignature=signature;
+    const restoreScroll=this.preserveScroll();
     const circumference=2*Math.PI*44,dash=((battery??0)/100)*circumference,layout=c.layout||"auto",minimal=layout==="minimal",compact=layout==="compact",full=layout==="full";
     const batteryState=this.raw(c.battery_state_entity).toLowerCase(),batteryLabel=batteryState==="on"?"Charging":batteryState==="off"?"Battery":this.state(c.battery_state_entity,"Battery");
     const metrics=this.metric("Battery Voltage",c.battery_voltage_entity,"mdi:lightning-bolt")+this.metric("Supply Voltage",c.supply_voltage_entity,"mdi:sine-wave")+this.metric("Current",c.current_entity,"mdi:current-dc")+this.metric("Power",c.power_entity,"mdi:gauge");
@@ -217,6 +237,8 @@ class WaveshareUpsCard extends HTMLElement {
       ${!minimal&&!compact&&metrics?`<div class="metrics">${metrics}</div>`:""}${!minimal&&c.show_actions&&actions?`<div class="icon-controls">${actions}</div>`:""}${full&&c.show_battery_health&&health?`<div class="section"><div class="section-title">Battery Health</div>${health}</div>`:""}${full&&c.show_test_history&&tests?`<div class="section"><div class="section-title">Test & Calibration</div>${tests}</div>`:""}</div></ha-card>`;
     this.shadowRoot.querySelectorAll("[data-entity]").forEach(el=>el.addEventListener("click",()=>this.more(el.dataset.entity)));
     this.shadowRoot.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>this.press(el.dataset.action,el.dataset.label)));
+    restoreScroll();
+    if(typeof requestAnimationFrame==="function")requestAnimationFrame(restoreScroll);
   }
 }
 if(!customElements.get("waveshare-ups-card-editor"))customElements.define("waveshare-ups-card-editor",WaveshareUpsCardEditor);
